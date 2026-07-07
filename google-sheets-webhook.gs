@@ -16,6 +16,9 @@ function doPost(e) {
       data.phone || '',
       data.address || '',
       data.items || '',
+      data.goodsTotal || data.total || 0,
+      data.tipRider || 0,
+      data.tipMerchant || 0,
       data.total || 0,
       data.note || '',
       data.status || '\u5f85\u5904\u7406',
@@ -47,6 +50,9 @@ function getOrderSheet_() {
     '\u7535\u8bdd',
     '\u5730\u5740',
     '\u5546\u54c1\u660e\u7ec6',
+    '\u5546\u54c1\u91d1\u989d',
+    '\u6253\u8d4f\u9a91\u624b',
+    '\u6253\u8d4f\u5546\u5bb6',
     '\u603b\u91d1\u989d',
     '\u5907\u6ce8',
     '\u72b6\u6001',
@@ -55,9 +61,12 @@ function getOrderSheet_() {
 
   if (sheet.getLastRow() === 0) {
     sheet.appendRow(headers);
-    sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold');
-    sheet.setFrozenRows(1);
+  } else {
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
   }
+
+  sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold');
+  sheet.setFrozenRows(1);
 
   return sheet;
 }

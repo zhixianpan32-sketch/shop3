@@ -136,6 +136,7 @@ function getOrderSpreadsheet_() {
 function ensureSchema_(spreadsheet) {
   var orders = ensureSheet_(spreadsheet, ORDER_SHEET_NAME, ORDER_HEADERS);
   var items = ensureSheet_(spreadsheet, ITEM_SHEET_NAME, ITEM_HEADERS);
+  migrateLegacyOrders_(orders, items);
   ensureSummarySheet_(spreadsheet);
 
   return { orders: orders, items: items };
@@ -217,6 +218,113 @@ function appendItemRows_(sheet, itemRows, createdAt, orderId) {
     sheet.getRange(firstRow, 1, rows.length, 1).setNumberFormat('yyyy-mm-dd hh:mm:ss');
     sheet.getRange(firstRow, 6, rows.length, 3).setNumberFormat('0.00');
   }
+}
+
+function migrateLegacyOrders_(ordersSheet, itemsSheet) {
+  var orderRowCount = ordersSheet.getLastRow() - 1;
+  if (orderRowCount <= 0) return;
+
+  var orderRange = ordersSheet.getRange(2, 1, orderRowCount, ORDER_HEADERS.length);
+  var orderRows = orderRange.getValues();
+  var existingItemOrders = {};
+  var itemRowCount = itemsSheet.getLastRow() - 1;
+
+  if (itemRowCount > 0) {
+    itemsSheet.getRange(2, 2, itemRowCount, 1).getValues().forEach(function(row) {
+      if (row[0]) existingItemOrders[String(row[0])] = true;
+    });
+  }
+
+  var changed = false;
+  var historicalItems = [];
+
+  orderRows.forEach(function(row) {
+    var legacyStatus = String(row[8] || '').trim();
+    var legacySource = String(row[9] || '').trim();
+    var isLegacy = !row[11] && !row[12] && (
+      legacyStatus === '\u5f85\u5904\u7406' ||
+      legacyStatus === '\u5df2\u5b8c\u6210' ||
+      legacySource ||
+      row[7]
+    );
+
+    if (isLegacy) {
+      var oldTotal = nonNegativeNumber_(row[6]);
+      var oldNote = row[7];
+      var oldStatus = row[8] || '\u5f85\u5904\u7406';
+      var oldSource = row[9];
+
+      row[7] = 0;
+      row[8] = 0;
+      row[9] = oldTotal;
+      row[10] = oldNote;
+      row[11] = oldStatus;
+      row[12] = oldSource;
+      changed = true;
+    }
+
+    var orderId = String(row[1] || '').trim();
+    if (!orderId || existingItemOrders[orderId]) return;
+
+    var parsedItems = parseLegacyItems_(row[5]);
+    parsedItems.forEach(function(item) {
+      historicalItems.push([
+        dateValue_(row[0]),
+        safeText_(orderId, 80),
+        '',
+        safeText_(item.name, 300),
+        '',
+        item.qty,
+        item.unitPrice,
+        item.subtotal
+      ]);
+    });
+
+    if (parsedItems.length) existingItemOrders[orderId] = true;
+  });
+
+  if (changed) {
+    orderRange.setValues(orderRows);
+    ordersSheet.getRange(2, 1, orderRowCount, 1)
+      .setNumberFormat('yyyy-mm-dd hh:mm:ss');
+    ordersSheet.getRange(2, 7, orderRowCount, 4)
+      .setNumberFormat('0.00');
+  }
+
+  if (historicalItems.length) {
+    var firstItemRow = itemsSheet.getLastRow() + 1;
+    itemsSheet
+      .getRange(firstItemRow, 1, historicalItems.length, ITEM_HEADERS.length)
+      .setValues(historicalItems);
+    itemsSheet
+      .getRange(firstItemRow, 1, historicalItems.length, 1)
+      .setNumberFormat('yyyy-mm-dd hh:mm:ss');
+    itemsSheet
+      .getRange(firstItemRow, 6, historicalItems.length, 3)
+      .setNumberFormat('0.00');
+  }
+}
+
+function parseLegacyItems_(value) {
+  var text = String(value || '').trim();
+  if (!text) return [];
+
+  var parsed = [];
+  text.split('\uff1b').forEach(function(part) {
+    var match = part.trim().match(/^(.*?)\s+x(\d+)\s*=\s*([0-9]+(?:\.[0-9]+)?)/i);
+    if (!match) return;
+
+    var quantity = Math.max(1, Math.floor(nonNegativeNumber_(match[2]) || 1));
+    var subtotal = nonNegativeNumber_(match[3]);
+    parsed.push({
+      name: match[1].trim(),
+      qty: quantity,
+      unitPrice: subtotal / quantity,
+      subtotal: subtotal
+    });
+  });
+
+  return parsed;
 }
 
 function safeText_(value, maxLength) {

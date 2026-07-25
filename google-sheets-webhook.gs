@@ -33,12 +33,14 @@ var ITEM_HEADERS = [
   '\u5c0f\u8ba1',
   '\u8ba2\u8d2d\u4eba',
   '\u8054\u7cfb\u7535\u8bdd',
-  '\u6536\u8d27\u5730\u5740'
+  '\u6536\u8d27\u5730\u5740',
+  '\u5546\u54c1\u56fe\u7247\u94fe\u63a5'
 ];
 
 var DISPATCH_HEADERS = [
   '\u4e0b\u5355\u65f6\u95f4',
   '\u8ba2\u5355\u53f7',
+  '\u5546\u54c1\u56fe\u7247',
   '\u8ba2\u8d2d\u4eba',
   '\u8054\u7cfb\u7535\u8bdd',
   '\u6536\u8d27\u5730\u5740',
@@ -120,7 +122,7 @@ function doPost(e) {
       phone: customerPhone,
       address: customerAddress
     });
-    refreshDispatchSheet_(spreadsheet, schema.orders);
+    refreshDispatchSheet_(spreadsheet, schema.orders, schema.items);
     SpreadsheetApp.flush();
 
     return jsonOutput_({
@@ -187,7 +189,7 @@ function ensureSchema_(spreadsheet) {
   enrichItemContacts_(orders, items);
   formatOrderSheet_(orders);
   ensureSummarySheet_(spreadsheet);
-  refreshDispatchSheet_(spreadsheet, orders);
+  refreshDispatchSheet_(spreadsheet, orders, items);
 
   return { orders: orders, items: items };
 }
@@ -257,7 +259,7 @@ function ensureSummarySheet_(spreadsheet) {
   }
 }
 
-function refreshDispatchSheet_(spreadsheet, ordersSheet) {
+function refreshDispatchSheet_(spreadsheet, ordersSheet, itemsSheet) {
   var sheet = ensureSheet_(
     spreadsheet,
     DISPATCH_SHEET_NAME,
@@ -269,6 +271,7 @@ function refreshDispatchSheet_(spreadsheet, ordersSheet) {
         .getRange(2, 1, sourceRowCount, ORDER_HEADERS.length)
         .getValues()
     : [];
+  var orderImageUrls = buildOrderImageUrls_(itemsSheet);
   var rows = [];
 
   sourceRows.forEach(function(row) {
@@ -276,6 +279,7 @@ function refreshDispatchSheet_(spreadsheet, ordersSheet) {
     rows.push([
       dateValue_(row[0]),
       row[1],
+      imageFormula_(orderImageUrls[String(row[1] || '').trim()]),
       row[2],
       row[3],
       row[4],
@@ -312,27 +316,59 @@ function refreshDispatchSheet_(spreadsheet, ordersSheet) {
     range.setValues(rows);
     sheet.getRange(2, 1, rows.length, 1)
       .setNumberFormat('yyyy-mm-dd hh:mm:ss');
-    sheet.getRange(2, 4, rows.length, 1).setNumberFormat('@');
-    sheet.getRange(2, 7, rows.length, 5).setNumberFormat('0.00');
+    sheet.getRange(2, 5, rows.length, 1).setNumberFormat('@');
+    sheet.getRange(2, 8, rows.length, 5).setNumberFormat('0.00');
+    sheet.setRowHeights(2, rows.length, 78);
 
     var backgrounds = rows.map(function(row) {
-      var color = nonNegativeNumber_(row[7]) > 0 ? '#FFF4CC' : '#FFFFFF';
+      var color = nonNegativeNumber_(row[8]) > 0 ? '#FFF4CC' : '#FFFFFF';
       return DISPATCH_HEADERS.map(function() { return color; });
     });
     range.setBackgrounds(backgrounds);
   }
 
   sheet.setFrozenRows(1);
-  sheet.setFrozenColumns(2);
-  sheet.setColumnWidth(3, 140);
-  sheet.setColumnWidth(4, 150);
-  sheet.setColumnWidth(5, 240);
-  sheet.setColumnWidth(6, 420);
+  sheet.setFrozenColumns(3);
+  sheet.setColumnWidth(3, 90);
+  sheet.setColumnWidth(4, 140);
+  sheet.setColumnWidth(5, 150);
+  sheet.setColumnWidth(6, 240);
+  sheet.setColumnWidth(7, 420);
 
   if (sheet.getIndex() !== 1) {
     spreadsheet.setActiveSheet(sheet);
     spreadsheet.moveActiveSheet(1);
   }
+}
+
+function buildOrderImageUrls_(itemsSheet) {
+  var result = {};
+  if (!itemsSheet || itemsSheet.getLastRow() < 2) return result;
+
+  var columnCount = itemsSheet.getLastColumn();
+  var headers = itemsSheet.getRange(1, 1, 1, columnCount).getValues()[0];
+  var imageColumn = headers.indexOf('\u5546\u54c1\u56fe\u7247\u94fe\u63a5');
+  if (imageColumn < 0) return result;
+
+  itemsSheet
+    .getRange(2, 1, itemsSheet.getLastRow() - 1, columnCount)
+    .getValues()
+    .forEach(function(row) {
+      var orderId = String(row[1] || '').trim();
+      var imageUrl = safeImageUrl_(row[imageColumn]);
+      if (orderId && imageUrl && !result[orderId]) result[orderId] = imageUrl;
+    });
+  return result;
+}
+
+function safeImageUrl_(value) {
+  var url = safeText_(value, 2000);
+  return /^https?:\/\/[^\s"']+$/i.test(url) ? url : '';
+}
+
+function imageFormula_(url) {
+  if (!url) return '';
+  return '=IMAGE("' + url.replace(/"/g, '') + '",4,72,72)';
 }
 
 function hasOrder_(sheet, orderId) {
@@ -365,7 +401,8 @@ function appendItemRows_(sheet, itemRows, createdAt, orderId, customer) {
       nonNegativeNumber_(item.subtotal || unitPrice * quantity),
       safeText_(customer.name, 120),
       safeText_(customer.phone, 80),
-      safeText_(customer.address, 500)
+      safeText_(customer.address, 500),
+      safeImageUrl_(item.imageUrl)
     ]);
   });
 
@@ -511,7 +548,8 @@ function migrateLegacyOrders_(ordersSheet, itemsSheet) {
         item.subtotal,
         safeText_(row[2], 120),
         safeText_(row[3], 80),
-        safeText_(row[4], 500)
+        safeText_(row[4], 500),
+        ''
       ]);
     });
 
